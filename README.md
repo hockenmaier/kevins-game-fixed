@@ -30,11 +30,11 @@ otree devserver
 # Final Score Evaluations
 
 | Earnings | Evaluation | Note |
-|----------|------------|------|
-|   $24    |    Meh     | Average Chapman undergrad score (2nd attempt with same seed, 2 days apart) |
-|   $38    |    Good    | |
-|   $44    | Very Good  | Around the highest we saw among Chapman undergrads |
-| $45.50   |   Kevin    | What I earned my first time on this seed |
-| $48.22   | Also Kevin | What I earned playing right before uploading this.  I was out of practice, but also remembered some of the ebbs and flows of this random seed |
-| $52--$54 |  ~Optimal  | My estimate to what optimal play would earn |
-|   $74    | Cheating Max | Approximately the most you could earn if you knew what all random draws would be |
+|-|-|-|
+| $24 | Meh | Average Chapman undergrad score (2nd attempt with same seed, 2 days apart) |
+| $38 | Good | |
+| $44 | Very Good | Around the highest we saw among Chapman undergrads |
+| $45.50 | Kevin | What I earned my first time on this seed |
+| $48.22 | Also Kevin | What I earned playing right before uploading this.  I was out of practice, but also remembered some of the ebbs and flows of this random seed |
+| $52--$54 | ~Optimal | My estimate to what optimal play would earn |
+| $74 | Max Feasible | Approximately the most you could earn if you knew what all random draws would be |
