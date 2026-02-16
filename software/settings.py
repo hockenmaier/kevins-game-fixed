@@ -23,6 +23,26 @@ SESSION_CONFIGS = [
          worker_pay = 72,
          pay_scale_factor = 4
      ),
+     dict(
+         name='inv_experiment_1p_mode',
+         display_name='inv_experiment (1-player mode: instant start, instant submit)',
+         app_sequence=[
+          'investment',
+          'summary'
+          ],
+         num_demo_participants=1,
+         max_rounds = 100,
+         round_length = 36,
+         parts = 10,
+         workers = 10,
+         late_penalty = 0.15,
+         fail_penalty = 0.2,
+         allow_submit = True,
+         accumulate_time = True,
+         worker_pay = 72,
+         pay_scale_factor = 4,
+         single_player_mode = True,
+     ),
 ]
 ROOMS = [
     dict(

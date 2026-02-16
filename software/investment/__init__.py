@@ -11,8 +11,9 @@ doc = """
 """
 random.seed(1234)
 os.environ['TZ'] = 'America/Los_Angeles'
-#This function only exists un Unix systems only not on windows
-time.tzset()
+# This function only exists on Unix systems (not on Windows).
+if hasattr(time, 'tzset'):
+    time.tzset()
 class C(BaseConstants):
     NAME_IN_URL = 'chapman'
     PLAYERS_PER_GROUP = None
@@ -60,7 +61,10 @@ def creating_session(subsession):
             start = datetime.strptime(initial_date + ' ' + initial_hour, format)
             start = start.timestamp()
         else:
-            start = time.time() + C.DEFAULT_START_DELAY
+            if session.config.get('single_player_mode', False):
+                start = time.time()
+            else:
+                start = time.time() + C.DEFAULT_START_DELAY
         session.start_time = start
         for player in subsession.get_players():
             player.participant.expiry = session.start_time + session.day_length
@@ -85,6 +89,7 @@ class Group(BaseGroup):
 class Player(BasePlayer):
     offer_actions = models.StringField(blank=True)
     work_actions = models.StringField(blank=True)
+    pause_ms = models.IntegerField(initial=0)
 
     @property
     def player_id(self):
@@ -96,11 +101,13 @@ class FrontPage(Page):
 
     @staticmethod
     def is_displayed(player: Player):
+        if player.session.config.get('single_player_mode', False):
+            return False
         return get_seconds_until_start(player) > 0
 
 class Investment(Page):
     form_model = "player"
-    form_fields = ['offer_actions', 'work_actions']
+    form_fields = ['offer_actions', 'work_actions', 'pause_ms']
     @staticmethod
     def js_vars(player):
         participant = player.participant
@@ -116,7 +123,11 @@ class Investment(Page):
          for j in jobs]
         return dict(
             workers=player.session.workers,
-            jobs=job_dict
+            jobs=job_dict,
+            allow_submit=player.session.config['allow_submit'],
+            submit_delay_ms=0 if player.session.config.get('single_player_mode', False) else 15000,
+            single_player_mode=player.session.config.get('single_player_mode', False),
+            round_seconds_remaining=max(0, int(get_period_time_seconds(player))),
         )
 
     @staticmethod
@@ -128,8 +139,13 @@ class Investment(Page):
         job_strs = []
         ended_strs = []
         danger_bools = []
+        feedback_events = dict(
+            daily_penalty=0,
+            job_events=[],
+        )
         if env.history.history:
             hist = env.history.history[-1]
+            feedback_events['daily_penalty'] = participant.env.worker_pay
             old_jobs = hist.jobs
             old_job_actions = hist.job_actions
             for job, worked in zip(old_jobs, old_job_actions):
@@ -154,26 +170,60 @@ class Investment(Page):
             job_strs = sorted(job_strs, key=lambda x:(x[0], x[1]))
             job_strs = [x[2] for x in job_strs]
 
-            ended_jobs = hist.ended
-            ended_actions = hist.ended_actions
-            for job, worked in zip(ended_jobs, ended_actions):
+            new_ended_names = set(job.name for job in hist.ended)
+            all_ended_jobs = []
+            for old_hist in reversed(env.history.history):
+                for ended_job, ended_action in zip(old_hist.ended, old_hist.ended_actions):
+                    all_ended_jobs.append((ended_job, ended_action, ended_job.name in new_ended_names))
+
+            for job, worked, is_new in all_ended_jobs:
                 s = job_env.common_job_str(job)
                 parts_completed_this_day = job.last_progress() * worked
                 (cur, last) = job_env.progress_str(job, parts_completed_this_day)
                 s['progress_cur'] = cur
                 s['progress_last'] = last
                 s['status'] = 'Failed' if job.failed else 'Completed'
+                s['is_new'] = is_new
                 ended_strs.append(s)
+
+            ended_jobs = hist.ended
+            ended_actions = hist.ended_actions
+            for job, worked in zip(ended_jobs, ended_actions):
+                if job.failed:
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=-max(0, -job.final_payment),
+                        kind='failed',
+                    ))
+                elif job.final_payment < job.payment:
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=job.final_payment,
+                        kind='late',
+                    ))
+                elif job.final_payment > 0:
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=job.final_payment,
+                        kind='completed',
+                    ))
         return dict(
             offer_strs = offers_strs,
             job_strs = job_strs,
             ended_strs = ended_strs,
             danger_bools = danger_bools,
             payoff_usd = f"${participant.env.total_payment/100:.2f}",
+            payoff_cents = int(participant.env.total_payment),
             workers = player.session.workers,
-            allow_submit = player.session.config['allow_submit']
+            allow_submit = player.session.config['allow_submit'],
+            single_player_mode=player.session.config.get('single_player_mode', False),
+            feedback_events=feedback_events,
         )
-    get_timeout_seconds = get_period_time_seconds
+    @staticmethod
+    def get_timeout_seconds(player):
+        if player.session.config.get('single_player_mode', False):
+            return None
+        return get_period_time_seconds(player)
 
     @staticmethod
     def before_next_page(player, timeout_happened):
@@ -194,6 +244,11 @@ class Investment(Page):
                 work_actions.append(0)
         participant.env.step(offer_actions, work_actions)
         participant.payoff = participant.env.total_payment
+
+        if player.session.config.get('single_player_mode', False):
+            pause_seconds = max(0, int(player.pause_ms)) / 1000
+            participant.expiry += pause_seconds
+
         if player.session.accumulate_time:
             participant.expiry = max(time.time(), participant.expiry) + player.session.day_length
         else:

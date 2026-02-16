@@ -7,12 +7,25 @@
         <tr>
             <th class="left-aligned">Day {{player.round_number}} of {{100}}</th>
             <th class="centered"><span id="time-left"></span> Remaining</th>
-            <th class="right-aligned">Earnings: {{payoff_usd}}</th>
+            <th class="right-aligned">
+                <span class="earnings-wrap">
+                    Earnings: <span id="earnings-total" data-total-cents="{{ payoff_cents }}">{{payoff_usd}}</span>
+                    <span id="daily-penalty-chip"></span>
+                </span>
+            </th>
         </tr>
     </table>
 </div>
+{{if single_player_mode}}
+<div id="pause-overlay" aria-live="polite">
+    <button type="button" class="pause-btn resume-btn" onclick="resumeGame()">Resume</button>
+</div>
+{{endif}}
 <input type="hidden" name="offer_actions" id="offer_actions" />
 <input type="hidden" name="work_actions" id="work_actions" />
+<input type="hidden" name="pause_ms" id="pause_ms" value="0" />
+<canvas id="fx-canvas" aria-hidden="true"></canvas>
+<div id="fx-banner" aria-live="polite"></div>
 
 <h3>Job Offers</h3>
 <table class="table  offer-section">
@@ -92,12 +105,17 @@
             </td>
             <td class="sparkline-cell" id="sparkline{{job.name}}"></td>
         </tr>
-        {% endfor %}
+        {{ endfor }}
     </tbody>
 </table>
 <br><br>
 {{if allow_submit}}
 <input type="submit" class="otree-btn-next" value="Submit Early">
+{{endif}}
+{{if single_player_mode}}
+<div class="pause-controls">
+    <button type="button" class="pause-btn" onclick="pauseGame()">Pause</button>
+</div>
 {{endif}}
 {{if ended_strs}}
 <h3>Ended Jobs</h3>
@@ -114,7 +132,7 @@
     </thead>
     <tbody>
         {{ for job in ended_strs }}
-        <tr>
+        <tr id="ended_row_{{job.name}}" class="{{if job.is_new}}{{else}}ended-historical{{endif}}">
             <td>{{job.status}}</td>
             <td>{{job.deadlines}}</td>
             <td>{{job.name}}</td>
@@ -122,7 +140,7 @@
             <td>{{job.progress_cur}}<span class="progress-text">{{job.progress_last}}</span></td>
             <td class="centered"><span class="earned-pay-text">{{job.payment}}</span><span class="lost-pay-text">{{job.penalty}}</span></td>
         </tr>
-        {% endfor %}
+        {{ endfor }}
     </tbody>
 </table>
 {{endif}}
@@ -225,12 +243,246 @@
      cursor: not-allowed; /* Cursor indicates the button is not clickable */
      opacity: 0.5; /* Make the button appear faded */
 }
+
+ #fx-canvas {
+     position: fixed;
+     inset: 0;
+     width: 100%;
+     height: 100%;
+     pointer-events: none;
+     z-index: 999;
+ }
+ #fx-banner {
+     position: fixed;
+     top: 75px;
+     right: 20px;
+     z-index: 1000;
+     font-family: "Courier New", monospace;
+     font-weight: 700;
+     letter-spacing: 1px;
+     text-transform: uppercase;
+     color: #fff;
+     background: rgba(20, 20, 20, 0.88);
+     border: 2px solid #fff;
+     box-shadow: 0 0 0 2px #000;
+     padding: 8px 12px;
+     opacity: 0;
+     transform: translateY(-8px);
+     transition: opacity 0.2s ease, transform 0.2s ease;
+ }
+ #fx-banner.visible {
+     opacity: 1;
+     transform: translateY(0);
+ }
+
+
+ .ended-historical {
+     opacity: 0.52;
+     filter: grayscale(0.25);
+ }
+ #earnings-total.flash-gain {
+     animation: gainFlash 0.2s ease-in-out 4;
+ }
+ #earnings-total.flash-loss {
+     animation: lossFlash 0.2s ease-in-out 4;
+ }
+ .earnings-wrap {
+     position: relative;
+     display: inline-block;
+     min-width: 300px;
+     text-align: right;
+ }
+ #earnings-total {
+     display: inline-block;
+     min-width: 85px;
+ }
+ #daily-penalty-chip {
+     position: absolute;
+     right: -92px;
+     top: 2px;
+     width: 82px;
+     text-align: left;
+     color: #ff8b8b;
+     font-weight: 700;
+     font-family: "Courier New", monospace;
+     opacity: 0;
+ }
+ #daily-penalty-chip.visible {
+     opacity: 1;
+ }
+ #daily-penalty-chip.fly-in {
+     animation: dailyFeeToTotal 0.5s ease-in-out forwards;
+ }
+ .money-fly {
+     position: fixed;
+     z-index: 4000;
+     font-weight: 800;
+     font-size: 28px;
+     font-family: "Courier New", monospace;
+     pointer-events: none;
+     text-shadow: 0 2px 0 rgba(0,0,0,0.3);
+ }
+ @keyframes gainFlash {
+     0%, 100% { color: inherit; }
+     50% { color: #3dff93; }
+ }
+ @keyframes lossFlash {
+     0%, 100% { color: inherit; }
+     50% { color: #ff6d6d; }
+ }
+ @keyframes dailyFeeToTotal {
+     0% { opacity: 1; transform: translateX(0); }
+     100% { opacity: 0; transform: translateX(-26px); }
+ }
+
+
+ .pause-controls {
+     margin: 14px 0 12px 0;
+     text-align: center;
+ }
+ .pause-btn {
+     background: #111;
+     color: #fff;
+     border: 2px solid #fff;
+     border-radius: 4px;
+     padding: 6px 14px;
+     font-weight: 700;
+     text-transform: uppercase;
+     letter-spacing: 1px;
+ }
+ #pause-overlay {
+     display: none;
+     position: fixed;
+     inset: 0;
+     background: #000;
+     z-index: 5000;
+     align-items: center;
+     justify-content: center;
+ }
+ #pause-overlay.visible {
+     display: flex;
+ }
+ .resume-btn {
+     transform: scale(1.3);
+ }
+
 </style>
 
 <script>
  let totalWorkers = js_vars.workers;
  let jobs = js_vars.jobs;
  let workersUsed = 0;
+ const feedbackEvents = {
+     dailyPenalty: {{ feedback_events.daily_penalty }},
+     jobEvents: [
+         {{ for e in feedback_events.job_events }}
+         { name: '{{e.name}}', cents: {{e.cents}}, kind: '{{e.kind}}' },
+         {{ endfor }}
+     ],
+ };
+
+ let animatedTotalCents = parseInt(document.getElementById('earnings-total').dataset.totalCents || '0');
+ let isPaused = false;
+
+ function setEarningsTotal(cents) {
+     animatedTotalCents = cents;
+     document.getElementById('earnings-total').textContent = `$${(cents / 100).toFixed(2)}`;
+ }
+
+
+ let singlePlayerMode = js_vars.single_player_mode;
+ let singlePlayerEndTimeMs = Date.now() + (js_vars.round_seconds_remaining * 1000);
+ let singlePlayerPauseStartedAt = null;
+ let totalPausedMs = 0;
+ let singlePlayerTimerHandle = null;
+
+ function formatTimerText(totalMs) {
+     const totalSec = Math.max(0, Math.ceil(totalMs / 1000));
+     const hours = Math.floor(totalSec / 3600);
+     const minutes = Math.floor((totalSec % 3600) / 60);
+     const seconds = totalSec % 60;
+
+     let timeString = '';
+     if (hours > 0) {
+         timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
+         if (minutes > 0) {
+             timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
+         }
+     } else if (minutes > 0) {
+         timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
+         if (seconds > 0) {
+             timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+         }
+     } else {
+         timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+     }
+     return timeString.trim();
+ }
+
+ function renderSinglePlayerTimer() {
+     if (!customTimerEle) {
+         return;
+     }
+     const remainingMs = Math.max(0, singlePlayerEndTimeMs - Date.now());
+     customTimerEle.textContent = `${formatTimerText(remainingMs)}${isPaused ? ' (Paused)' : ''}`;
+ }
+
+ function forceSubmitRound() {
+     const form = document.querySelector('form');
+     if (!form || form.dataset.autosubmitted === '1') {
+         return;
+     }
+     form.dataset.autosubmitted = '1';
+     document.getElementById('pause_ms').value = `${Math.round(totalPausedMs)}`;
+     form.requestSubmit();
+ }
+
+ function tickSinglePlayerTimer() {
+     if (isPaused) {
+         renderSinglePlayerTimer();
+         return;
+     }
+     const remainingMs = singlePlayerEndTimeMs - Date.now();
+     if (remainingMs <= 0) {
+         renderSinglePlayerTimer();
+         forceSubmitRound();
+         return;
+     }
+     renderSinglePlayerTimer();
+ }
+
+ function startSinglePlayerTimer() {
+     renderSinglePlayerTimer();
+     if (singlePlayerTimerHandle) {
+         window.clearInterval(singlePlayerTimerHandle);
+     }
+     singlePlayerTimerHandle = window.setInterval(tickSinglePlayerTimer, 250);
+ }
+
+ function pauseGame() {
+     const overlay = document.getElementById('pause-overlay');
+     if (overlay && !isPaused) {
+         overlay.classList.add('visible');
+         isPaused = true;
+         singlePlayerPauseStartedAt = Date.now();
+         renderSinglePlayerTimer();
+     }
+ }
+
+ function resumeGame() {
+     const overlay = document.getElementById('pause-overlay');
+     if (overlay && isPaused) {
+         overlay.classList.remove('visible');
+         isPaused = false;
+         if (singlePlayerPauseStartedAt) {
+             const pausedNow = Date.now() - singlePlayerPauseStartedAt;
+             totalPausedMs += pausedNow;
+             singlePlayerEndTimeMs += pausedNow;
+         }
+         singlePlayerPauseStartedAt = null;
+         renderSinglePlayerTimer();
+     }
+ }
 
  function updateJobAccessibility() {
      const jobCheckboxes = document.querySelectorAll('input[type="checkbox"][id^="working_checkbox"]');
@@ -312,29 +564,35 @@
 
  let customTimerEle = document.getElementById('time-left');
  document.addEventListener("DOMContentLoaded", function (event) {
-     $('.otree-timer__time-left').on('update.countdown', function (event) {
-         let timeString = "";
+     if (singlePlayerMode) {
+         startSinglePlayerTimer();
+     } else {
+         $('.otree-timer__time-left').on('update.countdown', function (event) {
+             let timeString = "";
 
-         const hours = event.offset.hours;
-         const minutes = event.offset.minutes;
-         const seconds = event.offset.seconds;
+             const hours = event.offset.hours;
+             const minutes = event.offset.minutes;
+             const seconds = event.offset.seconds;
 
-         if (hours > 0) {
-             timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
-             if (minutes > 0) {
-                 timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
-             }
-         } else if (minutes > 0) {
-             timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
-             if (seconds > 0) {
+             if (hours > 0) {
+                 timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
+                 if (minutes > 0) {
+                     timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
+                 }
+             } else if (minutes > 0) {
+                 timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
+                 if (seconds > 0) {
+                     timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+                 }
+             } else {
                  timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
              }
-         } else {
-             timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
-         }
 
-         customTimerEle.innerText = timeString.trim();
-     });
+             if (customTimerEle) {
+                 customTimerEle.innerText = timeString.trim();
+             }
+         });
+     }
  });
  // Function to draw sparklines with D3.js
  function drawSparklines(jobs) {
@@ -392,18 +650,245 @@
      });
  }
 
- document.addEventListener("DOMContentLoaded", function () {
-     // Disable the submit button on page load
-     let submitButton = document.querySelector('.otree-btn-next');
-     submitButton.disabled = true;
+ function showBanner(message, tone) {
+     const banner = document.getElementById('fx-banner');
+     banner.textContent = message;
+     banner.style.borderColor = tone === 'good' ? '#68f59c' : '#ff8b8b';
+     banner.style.color = tone === 'good' ? '#68f59c' : '#ff8b8b';
+     banner.classList.add('visible');
+     setTimeout(() => banner.classList.remove('visible'), 1200);
+ }
 
-     // Function to enable the submit button after 15 seconds
-     function enableSubmitButton() {
-         submitButton.disabled = false;
+ function playRetroTone(pattern) {
+     const AudioCtx = window.AudioContext || window.webkitAudioContext;
+     if (!AudioCtx) {
+         return;
+     }
+     const ctx = new AudioCtx();
+     const now = ctx.currentTime;
+     const notesByPattern = {
+         gain: [523.25, 659.25, 783.99],
+         dailyLoss: [196.00],
+         jobLoss: [220.00, 185.00, 146.00, 98.00],
+     };
+     const notes = notesByPattern[pattern] || notesByPattern.gain;
+     notes.forEach((freq, index) => {
+         const osc = ctx.createOscillator();
+         const gain = ctx.createGain();
+         osc.type = 'square';
+         osc.frequency.value = freq;
+         gain.gain.setValueAtTime(0.001, now + index * 0.09);
+         gain.gain.exponentialRampToValueAtTime(0.14, now + index * 0.09 + 0.02);
+         gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.09 + 0.16);
+         osc.connect(gain).connect(ctx.destination);
+         osc.start(now + index * 0.09);
+         osc.stop(now + index * 0.09 + 0.18);
+     });
+     setTimeout(() => ctx.close(), 900);
+ }
+
+ function burstParticlesAt(kind, x, y, count = 20) {
+     const canvas = document.getElementById('fx-canvas');
+     const ctx = canvas.getContext('2d');
+     canvas.width = window.innerWidth;
+     canvas.height = window.innerHeight;
+
+     const colors = kind === 'gain'
+         ? ['#00ff99', '#f8ff68', '#7ad7ff']
+         : (kind === 'dailyLoss' ? ['#ff9090', '#ffcc88'] : ['#ff2b2b', '#ff9900', '#d466ff']);
+
+     const intensity = kind === 'jobLoss' ? 4 : 3;
+     const spread = kind === 'jobLoss' ? 16 : 10;
+     const upwardLaunch = kind === 'jobLoss' ? 18 : 13;
+     const upwardDrift = kind === 'jobLoss' ? -0.08 : -0.05;
+
+     const startY = Math.min(y, canvas.height - 24);
+     const particles = Array.from({ length: count * intensity }, () => ({
+         x,
+         y: startY,
+         dx: (Math.random() - 0.5) * spread,
+         dy: -(upwardLaunch * (0.55 + Math.random() * 0.9)),
+         life: 1,
+         color: colors[Math.floor(Math.random() * colors.length)],
+         size: (kind === 'jobLoss' ? 4 : 3) + Math.random() * 5,
+     }));
+
+     function animate() {
+         ctx.clearRect(0, 0, canvas.width, canvas.height);
+         particles.forEach((p) => {
+             p.x += p.dx;
+             p.y += p.dy;
+             p.dy += upwardDrift;
+             p.life -= 0.018;
+             ctx.globalAlpha = Math.max(0, p.life);
+             ctx.fillStyle = p.color;
+             ctx.fillRect(p.x, p.y, p.size, p.size);
+         });
+         if (particles.some((p) => p.life > 0)) {
+             requestAnimationFrame(animate);
+         } else {
+             ctx.clearRect(0, 0, canvas.width, canvas.height);
+         }
      }
 
-     // Set a timeout to enable the submit button after 15 seconds
-     setTimeout(enableSubmitButton, 15000); // 15000 milliseconds = 15 seconds
+     animate();
+ }
+
+ function formatUsdFromCents(cents) {
+     const abs = Math.abs(cents) / 100;
+     return `$${abs.toFixed(2)}`;
+ }
+
+ function flashEarnings(isGain) {
+     const totalEl = document.getElementById('earnings-total');
+     totalEl.classList.remove('flash-gain', 'flash-loss');
+     totalEl.classList.add(isGain ? 'flash-gain' : 'flash-loss');
+     setTimeout(() => totalEl.classList.remove('flash-gain', 'flash-loss'), 1000);
+ }
+
+ function animateMoneyToTotal({ amountCents, signedCents, fromElement, isGain }) {
+     if (!fromElement || !amountCents) {
+         return Promise.resolve();
+     }
+
+     const totalEl = document.getElementById('earnings-total');
+     const start = fromElement.getBoundingClientRect();
+     const end = totalEl.getBoundingClientRect();
+
+     const fly = document.createElement('div');
+     fly.className = 'money-fly';
+     fly.style.color = isGain ? '#24d870' : '#ff5757';
+     fly.textContent = `${isGain ? '+' : '-'}${formatUsdFromCents(amountCents)}`;
+     document.body.appendChild(fly);
+
+     const sx = start.left + start.width / 2;
+     const sy = start.top + start.height / 2;
+     const ex = end.left + end.width / 2;
+     const ey = end.top + end.height / 2;
+
+     fly.style.left = `${sx}px`;
+     fly.style.top = `${sy}px`;
+
+     const angle = Math.PI / 6; // 30 degrees
+     const controlLen = 160;
+     const controlX = sx + Math.cos(angle) * controlLen;
+     const controlY = sy - Math.sin(angle) * controlLen;
+     const duration = 1500;
+     const begin = performance.now();
+
+     return new Promise((resolve) => {
+         function step(now) {
+             const rawT = Math.min(1, (now - begin) / duration);
+             const t = 0.5 - 0.5 * Math.cos(Math.PI * rawT); // sine in/out easing
+             const omt = 1 - t;
+             const x = omt * omt * sx + 2 * omt * t * controlX + t * t * ex;
+             const y = omt * omt * sy + 2 * omt * t * controlY + t * t * ey;
+             fly.style.left = `${x}px`;
+             fly.style.top = `${y}px`;
+             fly.style.opacity = `${1 - rawT * 0.15}`;
+
+             if (rawT < 1) {
+                 requestAnimationFrame(step);
+             } else {
+                 fly.remove();
+                 setEarningsTotal(animatedTotalCents + signedCents);
+                 flashEarnings(isGain);
+                 resolve();
+             }
+         }
+         requestAnimationFrame(step);
+     });
+ }
+
+ async function applyDailyPenaltyFeedback() {
+     if (!feedbackEvents.dailyPenalty) {
+         return;
+     }
+     const chip = document.getElementById('daily-penalty-chip');
+     chip.textContent = `-${formatUsdFromCents(feedbackEvents.dailyPenalty)}`;
+     chip.classList.add('visible', 'fly-in');
+
+     const totalEl = document.getElementById('earnings-total');
+     const totalRect = totalEl.getBoundingClientRect();
+     burstParticlesAt('dailyLoss', totalRect.right + 8, totalRect.top + 12, 10);
+     playRetroTone('dailyLoss');
+
+     await new Promise((resolve) => setTimeout(resolve, 500));
+
+     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty);
+     flashEarnings(false);
+
+     chip.classList.remove('visible', 'fly-in');
+     chip.textContent = '';
+ }
+
+ async function triggerFinancialFeedback() {
+     const totalJobImpact = feedbackEvents.jobEvents.reduce((sum, evt) => sum + evt.cents, 0);
+     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty - totalJobImpact);
+
+     await applyDailyPenaltyFeedback();
+
+     if (!feedbackEvents.jobEvents.length) {
+         return;
+     }
+
+     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+     for (const evt of feedbackEvents.jobEvents) {
+         const row = document.getElementById(`ended_row_${evt.name}`);
+         if (!row) {
+             continue;
+         }
+
+         const paymentCell = row.querySelector('td:last-child');
+         const isGain = evt.cents > 0;
+         const amount = Math.abs(evt.cents);
+
+         if (evt.kind === 'failed') {
+             const rect = row.getBoundingClientRect();
+             burstParticlesAt('jobLoss', rect.left + rect.width * 0.75, rect.top + rect.height / 2, 52);
+             playRetroTone('jobLoss');
+             showBanner(`Hard deadline miss on ${evt.name}: -${formatUsdFromCents(amount)}`, 'bad');
+         } else if (evt.kind === 'late') {
+             const rect = row.getBoundingClientRect();
+             burstParticlesAt('dailyLoss', rect.left + rect.width * 0.75, rect.top + rect.height / 2, 20);
+             playRetroTone('dailyLoss');
+             showBanner(`${evt.name} paid late: +${formatUsdFromCents(amount)}`, 'good');
+         } else {
+             playRetroTone('gain');
+             burstParticlesAt('gain', paymentCell.getBoundingClientRect().left, paymentCell.getBoundingClientRect().top, 26);
+             showBanner(`Completed ${evt.name}: +${formatUsdFromCents(amount)}`, 'good');
+         }
+
+         await animateMoneyToTotal({
+             amountCents: amount,
+             signedCents: evt.cents,
+             fromElement: paymentCell,
+             isGain,
+         });
+     }
+ }
+
+ document.addEventListener("DOMContentLoaded", function () {
+     const form = document.querySelector('form');
+     if (form) {
+         form.addEventListener('submit', function () {
+             document.getElementById('pause_ms').value = `${Math.round(totalPausedMs)}`;
+         });
+     }
+
+     let submitButton = document.querySelector('.otree-btn-next');
+     if (submitButton) {
+         const submitDelayMs = js_vars.submit_delay_ms;
+         if (submitDelayMs > 0) {
+             submitButton.disabled = true;
+             setTimeout(() => {
+                 submitButton.disabled = false;
+             }, submitDelayMs);
+         }
+     }
+
+     triggerFinancialFeedback();
  });
 
  // Initial call to set up job accessibility based on initial worker count
