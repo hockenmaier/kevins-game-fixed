@@ -23,6 +23,7 @@
 {{endif}}
 <input type="hidden" name="offer_actions" id="offer_actions" />
 <input type="hidden" name="work_actions" id="work_actions" />
+<input type="hidden" name="pause_ms" id="pause_ms" value="0" />
 <canvas id="fx-canvas" aria-hidden="true"></canvas>
 <div id="fx-banner" aria-live="polite"></div>
 
@@ -389,33 +390,97 @@
  }
 
 
+ let singlePlayerMode = js_vars.single_player_mode;
+ let singlePlayerEndTimeMs = Date.now() + (js_vars.round_seconds_remaining * 1000);
+ let singlePlayerPauseStartedAt = null;
+ let totalPausedMs = 0;
+ let singlePlayerTimerHandle = null;
+
+ function formatTimerText(totalMs) {
+     const totalSec = Math.max(0, Math.ceil(totalMs / 1000));
+     const hours = Math.floor(totalSec / 3600);
+     const minutes = Math.floor((totalSec % 3600) / 60);
+     const seconds = totalSec % 60;
+
+     let timeString = '';
+     if (hours > 0) {
+         timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
+         if (minutes > 0) {
+             timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
+         }
+     } else if (minutes > 0) {
+         timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
+         if (seconds > 0) {
+             timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+         }
+     } else {
+         timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+     }
+     return timeString.trim();
+ }
+
+ function renderSinglePlayerTimer() {
+     if (!customTimerEle) {
+         return;
+     }
+     const remainingMs = Math.max(0, singlePlayerEndTimeMs - Date.now());
+     customTimerEle.textContent = `${formatTimerText(remainingMs)}${isPaused ? ' (Paused)' : ''}`;
+ }
+
+ function forceSubmitRound() {
+     const form = document.querySelector('form');
+     if (!form || form.dataset.autosubmitted === '1') {
+         return;
+     }
+     form.dataset.autosubmitted = '1';
+     document.getElementById('pause_ms').value = `${Math.round(totalPausedMs)}`;
+     form.requestSubmit();
+ }
+
+ function tickSinglePlayerTimer() {
+     if (isPaused) {
+         renderSinglePlayerTimer();
+         return;
+     }
+     const remainingMs = singlePlayerEndTimeMs - Date.now();
+     if (remainingMs <= 0) {
+         renderSinglePlayerTimer();
+         forceSubmitRound();
+         return;
+     }
+     renderSinglePlayerTimer();
+ }
+
+ function startSinglePlayerTimer() {
+     renderSinglePlayerTimer();
+     if (singlePlayerTimerHandle) {
+         window.clearInterval(singlePlayerTimerHandle);
+     }
+     singlePlayerTimerHandle = window.setInterval(tickSinglePlayerTimer, 250);
+ }
+
  function pauseGame() {
      const overlay = document.getElementById('pause-overlay');
-     if (overlay) {
+     if (overlay && !isPaused) {
          overlay.classList.add('visible');
          isPaused = true;
-         if (customTimerEle && !customTimerEle.textContent.includes('(Paused)')) {
-             customTimerEle.textContent = `${customTimerEle.textContent} (Paused)`;
-         }
-         if (window.jQuery && $('.otree-timer__time-left').countdown) {
-             $('.otree-timer').countdown('pause');
-             $('.otree-timer__time-left').countdown('pause');
-         }
+         singlePlayerPauseStartedAt = Date.now();
+         renderSinglePlayerTimer();
      }
  }
 
  function resumeGame() {
      const overlay = document.getElementById('pause-overlay');
-     if (overlay) {
+     if (overlay && isPaused) {
          overlay.classList.remove('visible');
          isPaused = false;
-         if (customTimerEle) {
-             customTimerEle.textContent = customTimerEle.textContent.replace(' (Paused)', '');
+         if (singlePlayerPauseStartedAt) {
+             const pausedNow = Date.now() - singlePlayerPauseStartedAt;
+             totalPausedMs += pausedNow;
+             singlePlayerEndTimeMs += pausedNow;
          }
-         if (window.jQuery && $('.otree-timer__time-left').countdown) {
-             $('.otree-timer').countdown('resume');
-             $('.otree-timer__time-left').countdown('resume');
-         }
+         singlePlayerPauseStartedAt = null;
+         renderSinglePlayerTimer();
      }
  }
 
@@ -499,35 +564,35 @@
 
  let customTimerEle = document.getElementById('time-left');
  document.addEventListener("DOMContentLoaded", function (event) {
-     $('.otree-timer__time-left').on('update.countdown', function (event) {
-         if (isPaused) {
-             event.preventDefault();
-             return;
-         }
-         let timeString = "";
+     if (singlePlayerMode) {
+         startSinglePlayerTimer();
+     } else {
+         $('.otree-timer__time-left').on('update.countdown', function (event) {
+             let timeString = "";
 
-         const hours = event.offset.hours;
-         const minutes = event.offset.minutes;
-         const seconds = event.offset.seconds;
+             const hours = event.offset.hours;
+             const minutes = event.offset.minutes;
+             const seconds = event.offset.seconds;
 
-         if (hours > 0) {
-             timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
-             if (minutes > 0) {
-                 timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
-             }
-         } else if (minutes > 0) {
-             timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
-             if (seconds > 0) {
+             if (hours > 0) {
+                 timeString += `${hours} hour${hours > 1 ? 's' : ''} `;
+                 if (minutes > 0) {
+                     timeString += `${minutes} minute${minutes > 1 ? 's' : ''}`;
+                 }
+             } else if (minutes > 0) {
+                 timeString += `${minutes} minute${minutes > 1 ? 's' : ''} `;
+                 if (seconds > 0) {
+                     timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
+                 }
+             } else {
                  timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
              }
-         } else {
-             timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
-         }
 
-         if (customTimerEle) {
-             customTimerEle.innerText = timeString.trim().replace(' (Paused)', '');
-         }
-     });
+             if (customTimerEle) {
+                 customTimerEle.innerText = timeString.trim();
+             }
+         });
+     }
  });
  // Function to draw sparklines with D3.js
  function drawSparklines(jobs) {
@@ -805,6 +870,13 @@
  }
 
  document.addEventListener("DOMContentLoaded", function () {
+     const form = document.querySelector('form');
+     if (form) {
+         form.addEventListener('submit', function () {
+             document.getElementById('pause_ms').value = `${Math.round(totalPausedMs)}`;
+         });
+     }
+
      let submitButton = document.querySelector('.otree-btn-next');
      if (submitButton) {
          const submitDelayMs = js_vars.submit_delay_ms;

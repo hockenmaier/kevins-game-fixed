@@ -89,6 +89,7 @@ class Group(BaseGroup):
 class Player(BasePlayer):
     offer_actions = models.StringField(blank=True)
     work_actions = models.StringField(blank=True)
+    pause_ms = models.IntegerField(initial=0)
 
     @property
     def player_id(self):
@@ -106,7 +107,7 @@ class FrontPage(Page):
 
 class Investment(Page):
     form_model = "player"
-    form_fields = ['offer_actions', 'work_actions']
+    form_fields = ['offer_actions', 'work_actions', 'pause_ms']
     @staticmethod
     def js_vars(player):
         participant = player.participant
@@ -126,6 +127,7 @@ class Investment(Page):
             allow_submit=player.session.config['allow_submit'],
             submit_delay_ms=0 if player.session.config.get('single_player_mode', False) else 15000,
             single_player_mode=player.session.config.get('single_player_mode', False),
+            round_seconds_remaining=max(0, int(get_period_time_seconds(player))),
         )
 
     @staticmethod
@@ -217,7 +219,11 @@ class Investment(Page):
             single_player_mode=player.session.config.get('single_player_mode', False),
             feedback_events=feedback_events,
         )
-    get_timeout_seconds = get_period_time_seconds
+    @staticmethod
+    def get_timeout_seconds(player):
+        if player.session.config.get('single_player_mode', False):
+            return None
+        return get_period_time_seconds(player)
 
     @staticmethod
     def before_next_page(player, timeout_happened):
@@ -238,6 +244,11 @@ class Investment(Page):
                 work_actions.append(0)
         participant.env.step(offer_actions, work_actions)
         participant.payoff = participant.env.total_payment
+
+        if player.session.config.get('single_player_mode', False):
+            pause_seconds = max(0, int(player.pause_ms)) / 1000
+            participant.expiry += pause_seconds
+
         if player.session.accumulate_time:
             participant.expiry = max(time.time(), participant.expiry) + player.session.day_length
         else:
