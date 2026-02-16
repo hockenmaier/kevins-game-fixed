@@ -13,6 +13,8 @@
 </div>
 <input type="hidden" name="offer_actions" id="offer_actions" />
 <input type="hidden" name="work_actions" id="work_actions" />
+<canvas id="fx-canvas" aria-hidden="true"></canvas>
+<div id="fx-banner" aria-live="polite"></div>
 
 <h3>Job Offers</h3>
 <table class="table  offer-section">
@@ -225,12 +227,53 @@
      cursor: not-allowed; /* Cursor indicates the button is not clickable */
      opacity: 0.5; /* Make the button appear faded */
 }
+
+ #fx-canvas {
+     position: fixed;
+     inset: 0;
+     width: 100%;
+     height: 100%;
+     pointer-events: none;
+     z-index: 999;
+ }
+ #fx-banner {
+     position: fixed;
+     top: 75px;
+     right: 20px;
+     z-index: 1000;
+     font-family: "Courier New", monospace;
+     font-weight: 700;
+     letter-spacing: 1px;
+     text-transform: uppercase;
+     color: #fff;
+     background: rgba(20, 20, 20, 0.88);
+     border: 2px solid #fff;
+     box-shadow: 0 0 0 2px #000;
+     padding: 8px 12px;
+     opacity: 0;
+     transform: translateY(-8px);
+     transition: opacity 0.2s ease, transform 0.2s ease;
+ }
+ #fx-banner.visible {
+     opacity: 1;
+     transform: translateY(0);
+ }
+
 </style>
 
 <script>
  let totalWorkers = js_vars.workers;
  let jobs = js_vars.jobs;
  let workersUsed = 0;
+ const feedbackEvents = {
+     completionGain: {{ feedback_events.completion_gain }},
+     completionCount: {{ feedback_events.completion_count }},
+     failedLoss: {{ feedback_events.failed_loss }},
+     failedCount: {{ feedback_events.failed_count }},
+     lateLoss: {{ feedback_events.late_loss }},
+     lateCount: {{ feedback_events.late_count }},
+     dailyPenalty: {{ feedback_events.daily_penalty }},
+ };
 
  function updateJobAccessibility() {
      const jobCheckboxes = document.querySelectorAll('input[type="checkbox"][id^="working_checkbox"]');
@@ -392,18 +435,109 @@
      });
  }
 
- document.addEventListener("DOMContentLoaded", function () {
-     // Disable the submit button on page load
-     let submitButton = document.querySelector('.otree-btn-next');
-     submitButton.disabled = true;
+ function showBanner(message, tone) {
+     const banner = document.getElementById('fx-banner');
+     banner.textContent = message;
+     banner.style.borderColor = tone === 'good' ? '#68f59c' : '#ff8b8b';
+     banner.style.color = tone === 'good' ? '#68f59c' : '#ff8b8b';
+     banner.classList.add('visible');
+     setTimeout(() => banner.classList.remove('visible'), 1200);
+ }
 
-     // Function to enable the submit button after 15 seconds
-     function enableSubmitButton() {
-         submitButton.disabled = false;
+ function playRetroTone(isGain) {
+     const AudioCtx = window.AudioContext || window.webkitAudioContext;
+     if (!AudioCtx) {
+         return;
+     }
+     const ctx = new AudioCtx();
+     const now = ctx.currentTime;
+     const notes = isGain ? [523.25, 659.25, 783.99] : [329.63, 246.94, 196.00];
+     notes.forEach((freq, index) => {
+         const osc = ctx.createOscillator();
+         const gain = ctx.createGain();
+         osc.type = 'square';
+         osc.frequency.value = freq;
+         gain.gain.setValueAtTime(0.001, now + index * 0.07);
+         gain.gain.exponentialRampToValueAtTime(0.12, now + index * 0.07 + 0.02);
+         gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.07 + 0.14);
+         osc.connect(gain).connect(ctx.destination);
+         osc.start(now + index * 0.07);
+         osc.stop(now + index * 0.07 + 0.15);
+     });
+     setTimeout(() => ctx.close(), 500);
+ }
+
+ function burstParticles(kind, count = 28) {
+     const canvas = document.getElementById('fx-canvas');
+     const ctx = canvas.getContext('2d');
+     canvas.width = window.innerWidth;
+     canvas.height = window.innerHeight;
+
+     const colors = kind === 'gain'
+         ? ['#00ff99', '#f8ff68', '#7ad7ff']
+         : ['#ff5b5b', '#ffa24d', '#d466ff'];
+
+     const particles = Array.from({ length: count }, () => ({
+         x: canvas.width * (0.3 + Math.random() * 0.4),
+         y: canvas.height * (0.28 + Math.random() * 0.32),
+         dx: (Math.random() - 0.5) * 8,
+         dy: (Math.random() - 0.5) * 8,
+         life: 1,
+         color: colors[Math.floor(Math.random() * colors.length)],
+         size: 2 + Math.random() * 4,
+     }));
+
+     function animate() {
+         ctx.clearRect(0, 0, canvas.width, canvas.height);
+         particles.forEach((p) => {
+             p.x += p.dx;
+             p.y += p.dy;
+             p.dy += 0.12;
+             p.life -= 0.025;
+             ctx.globalAlpha = Math.max(0, p.life);
+             ctx.fillStyle = p.color;
+             ctx.fillRect(p.x, p.y, p.size, p.size);
+         });
+         if (particles.some((p) => p.life > 0)) {
+             requestAnimationFrame(animate);
+         } else {
+             ctx.clearRect(0, 0, canvas.width, canvas.height);
+         }
      }
 
-     // Set a timeout to enable the submit button after 15 seconds
-     setTimeout(enableSubmitButton, 15000); // 15000 milliseconds = 15 seconds
+     animate();
+ }
+
+ function triggerFinancialFeedback() {
+     if (feedbackEvents.completionGain > 0) {
+         showBanner(`+ $${(feedbackEvents.completionGain / 100).toFixed(2)} Job payout!`, 'good');
+         playRetroTone(true);
+         burstParticles('gain', 40);
+     }
+
+     if (feedbackEvents.failedLoss > 0 || feedbackEvents.lateLoss > 0 || feedbackEvents.dailyPenalty > 0) {
+         const totalLoss = feedbackEvents.failedLoss + feedbackEvents.lateLoss + feedbackEvents.dailyPenalty;
+         setTimeout(() => {
+             showBanner(`- $${(totalLoss / 100).toFixed(2)} Costs/Penalties`, 'bad');
+             playRetroTone(false);
+             burstParticles('loss', 34);
+         }, feedbackEvents.completionGain > 0 ? 450 : 50);
+     }
+ }
+
+ document.addEventListener("DOMContentLoaded", function () {
+     let submitButton = document.querySelector('.otree-btn-next');
+     if (submitButton) {
+         const submitDelayMs = js_vars.submit_delay_ms;
+         if (submitDelayMs > 0) {
+             submitButton.disabled = true;
+             setTimeout(() => {
+                 submitButton.disabled = false;
+             }, submitDelayMs);
+         }
+     }
+
+     triggerFinancialFeedback();
  });
 
  // Initial call to set up job accessibility based on initial worker count

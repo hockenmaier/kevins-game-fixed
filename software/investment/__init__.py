@@ -11,8 +11,9 @@ doc = """
 """
 random.seed(1234)
 os.environ['TZ'] = 'America/Los_Angeles'
-#This function only exists un Unix systems only not on windows
-time.tzset()
+# This function only exists on Unix systems (not on Windows).
+if hasattr(time, 'tzset'):
+    time.tzset()
 class C(BaseConstants):
     NAME_IN_URL = 'chapman'
     PLAYERS_PER_GROUP = None
@@ -60,7 +61,10 @@ def creating_session(subsession):
             start = datetime.strptime(initial_date + ' ' + initial_hour, format)
             start = start.timestamp()
         else:
-            start = time.time() + C.DEFAULT_START_DELAY
+            if session.config.get('single_player_mode', False):
+                start = time.time()
+            else:
+                start = time.time() + C.DEFAULT_START_DELAY
         session.start_time = start
         for player in subsession.get_players():
             player.participant.expiry = session.start_time + session.day_length
@@ -96,6 +100,8 @@ class FrontPage(Page):
 
     @staticmethod
     def is_displayed(player: Player):
+        if player.session.config.get('single_player_mode', False):
+            return False
         return get_seconds_until_start(player) > 0
 
 class Investment(Page):
@@ -116,7 +122,9 @@ class Investment(Page):
          for j in jobs]
         return dict(
             workers=player.session.workers,
-            jobs=job_dict
+            jobs=job_dict,
+            allow_submit=player.session.config['allow_submit'],
+            submit_delay_ms=0 if player.session.config.get('single_player_mode', False) else 15000,
         )
 
     @staticmethod
@@ -128,8 +136,18 @@ class Investment(Page):
         job_strs = []
         ended_strs = []
         danger_bools = []
+        feedback_events = dict(
+            completion_gain=0,
+            completion_count=0,
+            failed_loss=0,
+            failed_count=0,
+            late_loss=0,
+            late_count=0,
+            daily_penalty=0,
+        )
         if env.history.history:
             hist = env.history.history[-1]
+            feedback_events['daily_penalty'] = participant.env.worker_pay
             old_jobs = hist.jobs
             old_job_actions = hist.job_actions
             for job, worked in zip(old_jobs, old_job_actions):
@@ -164,6 +182,16 @@ class Investment(Page):
                 s['progress_last'] = last
                 s['status'] = 'Failed' if job.failed else 'Completed'
                 ended_strs.append(s)
+
+                if job.failed:
+                    feedback_events['failed_count'] += 1
+                    feedback_events['failed_loss'] += max(0, -job.final_payment)
+                elif job.final_payment < job.payment:
+                    feedback_events['late_count'] += 1
+                    feedback_events['late_loss'] += max(0, job.payment - job.final_payment)
+                elif job.final_payment > 0:
+                    feedback_events['completion_count'] += 1
+                    feedback_events['completion_gain'] += job.final_payment
         return dict(
             offer_strs = offers_strs,
             job_strs = job_strs,
@@ -171,7 +199,8 @@ class Investment(Page):
             danger_bools = danger_bools,
             payoff_usd = f"${participant.env.total_payment/100:.2f}",
             workers = player.session.workers,
-            allow_submit = player.session.config['allow_submit']
+            allow_submit = player.session.config['allow_submit'],
+            feedback_events=feedback_events,
         )
     get_timeout_seconds = get_period_time_seconds
 
