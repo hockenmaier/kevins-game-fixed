@@ -217,11 +217,7 @@ class Investment(Page):
             single_player_mode=player.session.config.get('single_player_mode', False),
             feedback_events=feedback_events,
         )
-    @staticmethod
-    def get_timeout_seconds(player):
-        if player.session.config.get('single_player_mode', False):
-            return None
-        return get_period_time_seconds(player)
+    get_timeout_seconds = get_period_time_seconds
 
     @staticmethod
     def before_next_page(player, timeout_happened):
