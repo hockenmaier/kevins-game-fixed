@@ -7,14 +7,16 @@
         <tr>
             <th class="left-aligned">Day {{player.round_number}} of {{100}}</th>
             <th class="centered"><span id="time-left"></span> Remaining</th>
-            <th class="right-aligned">Earnings: <span id="earnings-total" data-total-cents="{{ payoff_cents }}">{{payoff_usd}}</span> <span id="daily-penalty-chip"></span></th>
+            <th class="right-aligned">
+                <span class="earnings-wrap">
+                    Earnings: <span id="earnings-total" data-total-cents="{{ payoff_cents }}">{{payoff_usd}}</span>
+                    <span id="daily-penalty-chip"></span>
+                </span>
+            </th>
         </tr>
     </table>
 </div>
 {{if single_player_mode}}
-<div class="pause-controls">
-    <button type="button" class="pause-btn" onclick="pauseGame()">Pause</button>
-</div>
 <div id="pause-overlay" aria-live="polite">
     <button type="button" class="pause-btn resume-btn" onclick="resumeGame()">Resume</button>
 </div>
@@ -108,6 +110,11 @@
 <br><br>
 {{if allow_submit}}
 <input type="submit" class="otree-btn-next" value="Submit Early">
+{{endif}}
+{{if single_player_mode}}
+<div class="pause-controls">
+    <button type="button" class="pause-btn" onclick="pauseGame()">Pause</button>
+</div>
 {{endif}}
 {{if ended_strs}}
 <h3>Ended Jobs</h3>
@@ -278,9 +285,22 @@
  #earnings-total.flash-loss {
      animation: lossFlash 0.2s ease-in-out 4;
  }
- #daily-penalty-chip {
+ .earnings-wrap {
+     position: relative;
      display: inline-block;
-     margin-left: 8px;
+     min-width: 300px;
+     text-align: right;
+ }
+ #earnings-total {
+     display: inline-block;
+     min-width: 85px;
+ }
+ #daily-penalty-chip {
+     position: absolute;
+     right: -92px;
+     top: 2px;
+     width: 82px;
+     text-align: left;
      color: #ff8b8b;
      font-weight: 700;
      font-family: "Courier New", monospace;
@@ -316,8 +336,8 @@
 
 
  .pause-controls {
-     margin: 8px 0 10px 0;
-     text-align: right;
+     margin: 14px 0 12px 0;
+     text-align: center;
  }
  .pause-btn {
      background: #111;
@@ -361,6 +381,7 @@
  };
 
  let animatedTotalCents = parseInt(document.getElementById('earnings-total').dataset.totalCents || '0');
+ let isPaused = false;
 
  function setEarningsTotal(cents) {
      animatedTotalCents = cents;
@@ -372,6 +393,10 @@
      const overlay = document.getElementById('pause-overlay');
      if (overlay) {
          overlay.classList.add('visible');
+         isPaused = true;
+         if (window.jQuery && $('.otree-timer__time-left').countdown) {
+             $('.otree-timer__time-left').countdown('pause');
+         }
      }
  }
 
@@ -379,6 +404,10 @@
      const overlay = document.getElementById('pause-overlay');
      if (overlay) {
          overlay.classList.remove('visible');
+         isPaused = false;
+         if (window.jQuery && $('.otree-timer__time-left').countdown) {
+             $('.otree-timer__time-left').countdown('resume');
+         }
      }
  }
 
@@ -463,6 +492,10 @@
  let customTimerEle = document.getElementById('time-left');
  document.addEventListener("DOMContentLoaded", function (event) {
      $('.otree-timer__time-left').on('update.countdown', function (event) {
+         if (isPaused) {
+             event.preventDefault();
+             return;
+         }
          let timeString = "";
 
          const hours = event.offset.hours;
@@ -589,17 +622,20 @@
          ? ['#00ff99', '#f8ff68', '#7ad7ff']
          : (kind === 'dailyLoss' ? ['#ff9090', '#ffcc88'] : ['#ff2b2b', '#ff9900', '#d466ff']);
 
-     const spread = kind === 'jobLoss' ? 12 : 6;
-     const gravity = kind === 'jobLoss' ? 0.18 : 0.08;
+     const intensity = kind === 'jobLoss' ? 4 : 3;
+     const spread = kind === 'jobLoss' ? 16 : 10;
+     const upwardLaunch = kind === 'jobLoss' ? 18 : 13;
+     const upwardDrift = kind === 'jobLoss' ? -0.08 : -0.05;
 
-     const particles = Array.from({ length: count }, () => ({
+     const startY = Math.min(y, canvas.height - 24);
+     const particles = Array.from({ length: count * intensity }, () => ({
          x,
-         y,
+         y: startY,
          dx: (Math.random() - 0.5) * spread,
-         dy: (Math.random() - 0.5) * spread,
+         dy: -(upwardLaunch * (0.55 + Math.random() * 0.9)),
          life: 1,
          color: colors[Math.floor(Math.random() * colors.length)],
-         size: (kind === 'jobLoss' ? 3 : 2) + Math.random() * 4,
+         size: (kind === 'jobLoss' ? 4 : 3) + Math.random() * 5,
      }));
 
      function animate() {
@@ -607,8 +643,8 @@
          particles.forEach((p) => {
              p.x += p.dx;
              p.y += p.dy;
-             p.dy += gravity;
-             p.life -= 0.03;
+             p.dy += upwardDrift;
+             p.life -= 0.018;
              ctx.globalAlpha = Math.max(0, p.life);
              ctx.fillStyle = p.color;
              ctx.fillRect(p.x, p.y, p.size, p.size);
