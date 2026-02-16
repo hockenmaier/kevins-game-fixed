@@ -125,6 +125,7 @@ class Investment(Page):
             jobs=job_dict,
             allow_submit=player.session.config['allow_submit'],
             submit_delay_ms=0 if player.session.config.get('single_player_mode', False) else 15000,
+            single_player_mode=player.session.config.get('single_player_mode', False),
         )
 
     @staticmethod
@@ -213,6 +214,7 @@ class Investment(Page):
             payoff_cents = int(participant.env.total_payment),
             workers = player.session.workers,
             allow_submit = player.session.config['allow_submit'],
+            single_player_mode=player.session.config.get('single_player_mode', False),
             feedback_events=feedback_events,
         )
     get_timeout_seconds = get_period_time_seconds
