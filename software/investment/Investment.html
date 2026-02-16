@@ -116,7 +116,7 @@
     </thead>
     <tbody>
         {{ for job in ended_strs }}
-        <tr id="ended_row_{{job.name}}" class="{% if not job.is_new %}ended-historical{% endif %}">
+        <tr id="ended_row_{{job.name}}" class="{{if job.is_new}}{{else}}ended-historical{{endif}}">
             <td>{{job.status}}</td>
             <td>{{job.deadlines}}</td>
             <td>{{job.name}}</td>
@@ -281,9 +281,12 @@
  #daily-penalty-chip.visible {
      opacity: 1;
  }
+ #daily-penalty-chip.fly-in {
+     animation: dailyFeeToTotal 0.5s ease-in-out forwards;
+ }
  .money-fly {
      position: fixed;
-     z-index: 1100;
+     z-index: 4000;
      font-weight: 800;
      font-size: 28px;
      font-family: "Courier New", monospace;
@@ -297,6 +300,10 @@
  @keyframes lossFlash {
      0%, 100% { color: inherit; }
      50% { color: #ff6d6d; }
+ }
+ @keyframes dailyFeeToTotal {
+     0% { opacity: 1; transform: translateX(0); }
+     100% { opacity: 0; transform: translateX(-26px); }
  }
 
 </style>
@@ -594,20 +601,28 @@
      const ex = end.left + end.width / 2;
      const ey = end.top + end.height / 2;
 
-     const controlX = sx + (ex - sx) * 0.35 + (isGain ? 55 : -55);
-     const controlY = Math.min(sy, ey) - 90;
+     fly.style.left = `${sx}px`;
+     fly.style.top = `${sy}px`;
+
+     const angle = Math.PI / 6; // 30 degrees
+     const controlLen = 160;
+     const controlX = sx + Math.cos(angle) * controlLen;
+     const controlY = sy - Math.sin(angle) * controlLen;
      const duration = 1500;
      const begin = performance.now();
 
      return new Promise((resolve) => {
          function step(now) {
-             const t = Math.min(1, (now - begin) / duration);
+             const rawT = Math.min(1, (now - begin) / duration);
+             const t = 0.5 - 0.5 * Math.cos(Math.PI * rawT); // sine in/out easing
              const omt = 1 - t;
              const x = omt * omt * sx + 2 * omt * t * controlX + t * t * ex;
              const y = omt * omt * sy + 2 * omt * t * controlY + t * t * ey;
-             fly.style.transform = `translate(${x}px, ${y}px) scale(${1 - t * 0.15})`;
-             fly.style.opacity = `${1 - t * 0.15}`;
-             if (t < 1) {
+             fly.style.left = `${x}px`;
+             fly.style.top = `${y}px`;
+             fly.style.opacity = `${1 - rawT * 0.15}`;
+
+             if (rawT < 1) {
                  requestAnimationFrame(step);
              } else {
                  fly.remove();
@@ -620,27 +635,33 @@
      });
  }
 
- function applyDailyPenaltyFeedback() {
+ async function applyDailyPenaltyFeedback() {
      if (!feedbackEvents.dailyPenalty) {
          return;
      }
      const chip = document.getElementById('daily-penalty-chip');
      chip.textContent = `-${formatUsdFromCents(feedbackEvents.dailyPenalty)}`;
-     chip.classList.add('visible');
-     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty);
+     chip.classList.add('visible', 'fly-in');
 
      const totalEl = document.getElementById('earnings-total');
      const totalRect = totalEl.getBoundingClientRect();
      burstParticlesAt('dailyLoss', totalRect.right + 8, totalRect.top + 12, 10);
      playRetroTone('dailyLoss');
+
+     await new Promise((resolve) => setTimeout(resolve, 500));
+
+     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty);
      flashEarnings(false);
+
+     chip.classList.remove('visible', 'fly-in');
+     chip.textContent = '';
  }
 
  async function triggerFinancialFeedback() {
      const totalJobImpact = feedbackEvents.jobEvents.reduce((sum, evt) => sum + evt.cents, 0);
      setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty - totalJobImpact);
 
-     applyDailyPenaltyFeedback();
+     await applyDailyPenaltyFeedback();
 
      if (!feedbackEvents.jobEvents.length) {
          return;

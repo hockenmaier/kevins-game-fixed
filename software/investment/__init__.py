@@ -169,7 +169,7 @@ class Investment(Page):
 
             new_ended_names = set(job.name for job in hist.ended)
             all_ended_jobs = []
-            for old_hist in env.history.history:
+            for old_hist in reversed(env.history.history):
                 for ended_job, ended_action in zip(old_hist.ended, old_hist.ended_actions):
                     all_ended_jobs.append((ended_job, ended_action, ended_job.name in new_ended_names))
 
