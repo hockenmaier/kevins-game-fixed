@@ -137,13 +137,8 @@ class Investment(Page):
         ended_strs = []
         danger_bools = []
         feedback_events = dict(
-            completion_gain=0,
-            completion_count=0,
-            failed_loss=0,
-            failed_count=0,
-            late_loss=0,
-            late_count=0,
             daily_penalty=0,
+            job_events=[],
         )
         if env.history.history:
             hist = env.history.history[-1]
@@ -172,32 +167,50 @@ class Investment(Page):
             job_strs = sorted(job_strs, key=lambda x:(x[0], x[1]))
             job_strs = [x[2] for x in job_strs]
 
-            ended_jobs = hist.ended
-            ended_actions = hist.ended_actions
-            for job, worked in zip(ended_jobs, ended_actions):
+            new_ended_names = set(job.name for job in hist.ended)
+            all_ended_jobs = []
+            for old_hist in env.history.history:
+                for ended_job, ended_action in zip(old_hist.ended, old_hist.ended_actions):
+                    all_ended_jobs.append((ended_job, ended_action, ended_job.name in new_ended_names))
+
+            for job, worked, is_new in all_ended_jobs:
                 s = job_env.common_job_str(job)
                 parts_completed_this_day = job.last_progress() * worked
                 (cur, last) = job_env.progress_str(job, parts_completed_this_day)
                 s['progress_cur'] = cur
                 s['progress_last'] = last
                 s['status'] = 'Failed' if job.failed else 'Completed'
+                s['is_new'] = is_new
                 ended_strs.append(s)
 
+            ended_jobs = hist.ended
+            ended_actions = hist.ended_actions
+            for job, worked in zip(ended_jobs, ended_actions):
                 if job.failed:
-                    feedback_events['failed_count'] += 1
-                    feedback_events['failed_loss'] += max(0, -job.final_payment)
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=-max(0, -job.final_payment),
+                        kind='failed',
+                    ))
                 elif job.final_payment < job.payment:
-                    feedback_events['late_count'] += 1
-                    feedback_events['late_loss'] += max(0, job.payment - job.final_payment)
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=job.final_payment,
+                        kind='late',
+                    ))
                 elif job.final_payment > 0:
-                    feedback_events['completion_count'] += 1
-                    feedback_events['completion_gain'] += job.final_payment
+                    feedback_events['job_events'].append(dict(
+                        name=job.name,
+                        cents=job.final_payment,
+                        kind='completed',
+                    ))
         return dict(
             offer_strs = offers_strs,
             job_strs = job_strs,
             ended_strs = ended_strs,
             danger_bools = danger_bools,
             payoff_usd = f"${participant.env.total_payment/100:.2f}",
+            payoff_cents = int(participant.env.total_payment),
             workers = player.session.workers,
             allow_submit = player.session.config['allow_submit'],
             feedback_events=feedback_events,

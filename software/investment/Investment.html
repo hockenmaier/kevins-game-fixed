@@ -7,7 +7,7 @@
         <tr>
             <th class="left-aligned">Day {{player.round_number}} of {{100}}</th>
             <th class="centered"><span id="time-left"></span> Remaining</th>
-            <th class="right-aligned">Earnings: {{payoff_usd}}</th>
+            <th class="right-aligned">Earnings: <span id="earnings-total" data-total-cents="{{ payoff_cents }}">{{payoff_usd}}</span> <span id="daily-penalty-chip"></span></th>
         </tr>
     </table>
 </div>
@@ -94,7 +94,7 @@
             </td>
             <td class="sparkline-cell" id="sparkline{{job.name}}"></td>
         </tr>
-        {% endfor %}
+        {{ endfor }}
     </tbody>
 </table>
 <br><br>
@@ -116,7 +116,7 @@
     </thead>
     <tbody>
         {{ for job in ended_strs }}
-        <tr>
+        <tr id="ended_row_{{job.name}}" class="{% if not job.is_new %}ended-historical{% endif %}">
             <td>{{job.status}}</td>
             <td>{{job.deadlines}}</td>
             <td>{{job.name}}</td>
@@ -124,7 +124,7 @@
             <td>{{job.progress_cur}}<span class="progress-text">{{job.progress_last}}</span></td>
             <td class="centered"><span class="earned-pay-text">{{job.payment}}</span><span class="lost-pay-text">{{job.penalty}}</span></td>
         </tr>
-        {% endfor %}
+        {{ endfor }}
     </tbody>
 </table>
 {{endif}}
@@ -259,6 +259,46 @@
      transform: translateY(0);
  }
 
+
+ .ended-historical {
+     opacity: 0.52;
+     filter: grayscale(0.25);
+ }
+ #earnings-total.flash-gain {
+     animation: gainFlash 0.2s ease-in-out 4;
+ }
+ #earnings-total.flash-loss {
+     animation: lossFlash 0.2s ease-in-out 4;
+ }
+ #daily-penalty-chip {
+     display: inline-block;
+     margin-left: 8px;
+     color: #ff8b8b;
+     font-weight: 700;
+     font-family: "Courier New", monospace;
+     opacity: 0;
+ }
+ #daily-penalty-chip.visible {
+     opacity: 1;
+ }
+ .money-fly {
+     position: fixed;
+     z-index: 1100;
+     font-weight: 800;
+     font-size: 28px;
+     font-family: "Courier New", monospace;
+     pointer-events: none;
+     text-shadow: 0 2px 0 rgba(0,0,0,0.3);
+ }
+ @keyframes gainFlash {
+     0%, 100% { color: inherit; }
+     50% { color: #3dff93; }
+ }
+ @keyframes lossFlash {
+     0%, 100% { color: inherit; }
+     50% { color: #ff6d6d; }
+ }
+
 </style>
 
 <script>
@@ -266,14 +306,20 @@
  let jobs = js_vars.jobs;
  let workersUsed = 0;
  const feedbackEvents = {
-     completionGain: {{ feedback_events.completion_gain }},
-     completionCount: {{ feedback_events.completion_count }},
-     failedLoss: {{ feedback_events.failed_loss }},
-     failedCount: {{ feedback_events.failed_count }},
-     lateLoss: {{ feedback_events.late_loss }},
-     lateCount: {{ feedback_events.late_count }},
      dailyPenalty: {{ feedback_events.daily_penalty }},
+     jobEvents: [
+         {{ for e in feedback_events.job_events }}
+         { name: '{{e.name}}', cents: {{e.cents}}, kind: '{{e.kind}}' },
+         {{ endfor }}
+     ],
  };
+
+ let animatedTotalCents = parseInt(document.getElementById('earnings-total').dataset.totalCents || '0');
+
+ function setEarningsTotal(cents) {
+     animatedTotalCents = cents;
+     document.getElementById('earnings-total').textContent = `$${(cents / 100).toFixed(2)}`;
+ }
 
  function updateJobAccessibility() {
      const jobCheckboxes = document.querySelectorAll('input[type="checkbox"][id^="working_checkbox"]');
@@ -444,30 +490,35 @@
      setTimeout(() => banner.classList.remove('visible'), 1200);
  }
 
- function playRetroTone(isGain) {
+ function playRetroTone(pattern) {
      const AudioCtx = window.AudioContext || window.webkitAudioContext;
      if (!AudioCtx) {
          return;
      }
      const ctx = new AudioCtx();
      const now = ctx.currentTime;
-     const notes = isGain ? [523.25, 659.25, 783.99] : [329.63, 246.94, 196.00];
+     const notesByPattern = {
+         gain: [523.25, 659.25, 783.99],
+         dailyLoss: [196.00],
+         jobLoss: [220.00, 185.00, 146.00, 98.00],
+     };
+     const notes = notesByPattern[pattern] || notesByPattern.gain;
      notes.forEach((freq, index) => {
          const osc = ctx.createOscillator();
          const gain = ctx.createGain();
          osc.type = 'square';
          osc.frequency.value = freq;
-         gain.gain.setValueAtTime(0.001, now + index * 0.07);
-         gain.gain.exponentialRampToValueAtTime(0.12, now + index * 0.07 + 0.02);
-         gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.07 + 0.14);
+         gain.gain.setValueAtTime(0.001, now + index * 0.09);
+         gain.gain.exponentialRampToValueAtTime(0.14, now + index * 0.09 + 0.02);
+         gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.09 + 0.16);
          osc.connect(gain).connect(ctx.destination);
-         osc.start(now + index * 0.07);
-         osc.stop(now + index * 0.07 + 0.15);
+         osc.start(now + index * 0.09);
+         osc.stop(now + index * 0.09 + 0.18);
      });
-     setTimeout(() => ctx.close(), 500);
+     setTimeout(() => ctx.close(), 900);
  }
 
- function burstParticles(kind, count = 28) {
+ function burstParticlesAt(kind, x, y, count = 20) {
      const canvas = document.getElementById('fx-canvas');
      const ctx = canvas.getContext('2d');
      canvas.width = window.innerWidth;
@@ -475,16 +526,19 @@
 
      const colors = kind === 'gain'
          ? ['#00ff99', '#f8ff68', '#7ad7ff']
-         : ['#ff5b5b', '#ffa24d', '#d466ff'];
+         : (kind === 'dailyLoss' ? ['#ff9090', '#ffcc88'] : ['#ff2b2b', '#ff9900', '#d466ff']);
+
+     const spread = kind === 'jobLoss' ? 12 : 6;
+     const gravity = kind === 'jobLoss' ? 0.18 : 0.08;
 
      const particles = Array.from({ length: count }, () => ({
-         x: canvas.width * (0.3 + Math.random() * 0.4),
-         y: canvas.height * (0.28 + Math.random() * 0.32),
-         dx: (Math.random() - 0.5) * 8,
-         dy: (Math.random() - 0.5) * 8,
+         x,
+         y,
+         dx: (Math.random() - 0.5) * spread,
+         dy: (Math.random() - 0.5) * spread,
          life: 1,
          color: colors[Math.floor(Math.random() * colors.length)],
-         size: 2 + Math.random() * 4,
+         size: (kind === 'jobLoss' ? 3 : 2) + Math.random() * 4,
      }));
 
      function animate() {
@@ -492,8 +546,8 @@
          particles.forEach((p) => {
              p.x += p.dx;
              p.y += p.dy;
-             p.dy += 0.12;
-             p.life -= 0.025;
+             p.dy += gravity;
+             p.life -= 0.03;
              ctx.globalAlpha = Math.max(0, p.life);
              ctx.fillStyle = p.color;
              ctx.fillRect(p.x, p.y, p.size, p.size);
@@ -508,20 +562,124 @@
      animate();
  }
 
- function triggerFinancialFeedback() {
-     if (feedbackEvents.completionGain > 0) {
-         showBanner(`+ $${(feedbackEvents.completionGain / 100).toFixed(2)} Job payout!`, 'good');
-         playRetroTone(true);
-         burstParticles('gain', 40);
+ function formatUsdFromCents(cents) {
+     const abs = Math.abs(cents) / 100;
+     return `$${abs.toFixed(2)}`;
+ }
+
+ function flashEarnings(isGain) {
+     const totalEl = document.getElementById('earnings-total');
+     totalEl.classList.remove('flash-gain', 'flash-loss');
+     totalEl.classList.add(isGain ? 'flash-gain' : 'flash-loss');
+     setTimeout(() => totalEl.classList.remove('flash-gain', 'flash-loss'), 1000);
+ }
+
+ function animateMoneyToTotal({ amountCents, signedCents, fromElement, isGain }) {
+     if (!fromElement || !amountCents) {
+         return Promise.resolve();
      }
 
-     if (feedbackEvents.failedLoss > 0 || feedbackEvents.lateLoss > 0 || feedbackEvents.dailyPenalty > 0) {
-         const totalLoss = feedbackEvents.failedLoss + feedbackEvents.lateLoss + feedbackEvents.dailyPenalty;
-         setTimeout(() => {
-             showBanner(`- $${(totalLoss / 100).toFixed(2)} Costs/Penalties`, 'bad');
-             playRetroTone(false);
-             burstParticles('loss', 34);
-         }, feedbackEvents.completionGain > 0 ? 450 : 50);
+     const totalEl = document.getElementById('earnings-total');
+     const start = fromElement.getBoundingClientRect();
+     const end = totalEl.getBoundingClientRect();
+
+     const fly = document.createElement('div');
+     fly.className = 'money-fly';
+     fly.style.color = isGain ? '#24d870' : '#ff5757';
+     fly.textContent = `${isGain ? '+' : '-'}${formatUsdFromCents(amountCents)}`;
+     document.body.appendChild(fly);
+
+     const sx = start.left + start.width / 2;
+     const sy = start.top + start.height / 2;
+     const ex = end.left + end.width / 2;
+     const ey = end.top + end.height / 2;
+
+     const controlX = sx + (ex - sx) * 0.35 + (isGain ? 55 : -55);
+     const controlY = Math.min(sy, ey) - 90;
+     const duration = 1500;
+     const begin = performance.now();
+
+     return new Promise((resolve) => {
+         function step(now) {
+             const t = Math.min(1, (now - begin) / duration);
+             const omt = 1 - t;
+             const x = omt * omt * sx + 2 * omt * t * controlX + t * t * ex;
+             const y = omt * omt * sy + 2 * omt * t * controlY + t * t * ey;
+             fly.style.transform = `translate(${x}px, ${y}px) scale(${1 - t * 0.15})`;
+             fly.style.opacity = `${1 - t * 0.15}`;
+             if (t < 1) {
+                 requestAnimationFrame(step);
+             } else {
+                 fly.remove();
+                 setEarningsTotal(animatedTotalCents + signedCents);
+                 flashEarnings(isGain);
+                 resolve();
+             }
+         }
+         requestAnimationFrame(step);
+     });
+ }
+
+ function applyDailyPenaltyFeedback() {
+     if (!feedbackEvents.dailyPenalty) {
+         return;
+     }
+     const chip = document.getElementById('daily-penalty-chip');
+     chip.textContent = `-${formatUsdFromCents(feedbackEvents.dailyPenalty)}`;
+     chip.classList.add('visible');
+     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty);
+
+     const totalEl = document.getElementById('earnings-total');
+     const totalRect = totalEl.getBoundingClientRect();
+     burstParticlesAt('dailyLoss', totalRect.right + 8, totalRect.top + 12, 10);
+     playRetroTone('dailyLoss');
+     flashEarnings(false);
+ }
+
+ async function triggerFinancialFeedback() {
+     const totalJobImpact = feedbackEvents.jobEvents.reduce((sum, evt) => sum + evt.cents, 0);
+     setEarningsTotal(animatedTotalCents - feedbackEvents.dailyPenalty - totalJobImpact);
+
+     applyDailyPenaltyFeedback();
+
+     if (!feedbackEvents.jobEvents.length) {
+         return;
+     }
+
+     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+     for (const evt of feedbackEvents.jobEvents) {
+         const row = document.getElementById(`ended_row_${evt.name}`);
+         if (!row) {
+             continue;
+         }
+
+         const paymentCell = row.querySelector('td:last-child');
+         const isGain = evt.cents > 0;
+         const amount = Math.abs(evt.cents);
+
+         if (evt.kind === 'failed') {
+             const rect = row.getBoundingClientRect();
+             burstParticlesAt('jobLoss', rect.left + rect.width * 0.75, rect.top + rect.height / 2, 52);
+             playRetroTone('jobLoss');
+             showBanner(`Hard deadline miss on ${evt.name}: -${formatUsdFromCents(amount)}`, 'bad');
+         } else if (evt.kind === 'late') {
+             const rect = row.getBoundingClientRect();
+             burstParticlesAt('dailyLoss', rect.left + rect.width * 0.75, rect.top + rect.height / 2, 20);
+             playRetroTone('dailyLoss');
+             showBanner(`${evt.name} paid late: +${formatUsdFromCents(amount)}`, 'good');
+         } else {
+             playRetroTone('gain');
+             burstParticlesAt('gain', paymentCell.getBoundingClientRect().left, paymentCell.getBoundingClientRect().top, 26);
+             showBanner(`Completed ${evt.name}: +${formatUsdFromCents(amount)}`, 'good');
+         }
+
+         await animateMoneyToTotal({
+             amountCents: amount,
+             signedCents: evt.cents,
+             fromElement: paymentCell,
+             isGain,
+         });
      }
  }
 
