@@ -6,7 +6,11 @@
     <table class="table top-table">
         <tr>
             <th class="left-aligned">Day {{player.round_number}} of {{100}}</th>
+            {{if single_player_mode}}
+            <th class="centered">No time limit</th>
+            {{else}}
             <th class="centered"><span id="time-left"></span> Remaining</th>
+            {{endif}}
             <th class="right-aligned">
                 <span class="earnings-wrap">
                     Earnings: <span id="earnings-total" data-total-cents="{{ payoff_cents }}">{{payoff_usd}}</span>
@@ -516,7 +520,9 @@
              timeString += `${seconds} second${seconds > 1 ? 's' : ''}`;
          }
 
-         customTimerEle.innerText = timeString.trim();
+         if (customTimerEle) {
+             customTimerEle.innerText = timeString.trim();
+         }
      });
  });
  // Function to draw sparklines with D3.js
